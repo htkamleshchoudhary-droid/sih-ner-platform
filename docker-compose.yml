@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: nershield_spatial_db
+    environment:
+      POSTGRES_DB: ner_shield_db
+      POSTGRES_USER: mdoner_admin
+      POSTGRES_PASSWORD: ProductionPassword2026
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ner_shield_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ner_shield_frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
