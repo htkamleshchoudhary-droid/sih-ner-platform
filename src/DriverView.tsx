@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import type { Vehicle, RoadCorridor } from './types/logistics.ts';
+import { supabase } from './supabaseClient.ts';
 
 interface DriverViewProps {
   vehicle: Vehicle | null;
@@ -26,42 +27,41 @@ export const DriverView: React.FC<DriverViewProps> = ({
     );
   }
 
-  // Text-to-Speech Engine for Hands-Free Driving
-  // Updated Multi-Lingual Text-to-Speech Engine
-const speakAlert = (text: string) => {
-  if (!('speechSynthesis' in window)) return;
-  
-  window.speechSynthesis.cancel(); // Stop active speech
-  const utterance = new SpeechSynthesisUtterance(text);
-  
-  utterance.rate = 0.85; // Clear pacing for noisy vehicle cabs
-  utterance.pitch = 1.0;
+  // Multi-Lingual Text-to-Speech Engine for Hands-Free Driving
+  const speakAlert = (text: string) => {
+    if (!('speechSynthesis' in window)) return;
+    
+    window.speechSynthesis.cancel(); // Stop active speech
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    utterance.rate = 0.85; // Clear pacing for noisy vehicle cabs
+    utterance.pitch = 1.0;
 
-  // Fetch available system voices
-  const voices = window.speechSynthesis.getVoices();
+    // Fetch available system voices
+    const voices = window.speechSynthesis.getVoices();
 
-  if (lang === 'HI') {
-    utterance.lang = 'hi-IN';
-    const hiVoice = voices.find(v => v.lang.includes('hi') || v.lang.includes('HI'));
-    if (hiVoice) utterance.voice = hiVoice;
-  } 
-  else if (lang === 'BN') {
-    utterance.lang = 'bn-IN';
-    const bnVoice = voices.find(v => v.lang.includes('bn') || v.lang.includes('BN'));
-    if (bnVoice) utterance.voice = bnVoice;
-  } 
-  else if (lang === 'AS') {
-    // Fallback for Assamese to Bengali/Hindi acoustic engine if AS voice is uninstalled
-    utterance.lang = 'bn-IN'; 
-    const asVoice = voices.find(v => v.lang.includes('bn') || v.lang.includes('hi'));
-    if (asVoice) utterance.voice = asVoice;
-  } 
-  else {
-    utterance.lang = 'en-US';
-  }
+    if (lang === 'HI') {
+      utterance.lang = 'hi-IN';
+      const hiVoice = voices.find(v => v.lang.includes('hi') || v.lang.includes('HI'));
+      if (hiVoice) utterance.voice = hiVoice;
+    } 
+    else if (lang === 'BN') {
+      utterance.lang = 'bn-IN';
+      const bnVoice = voices.find(v => v.lang.includes('bn') || v.lang.includes('BN'));
+      if (bnVoice) utterance.voice = bnVoice;
+    } 
+    else if (lang === 'AS') {
+      // Fallback for Assamese to Bengali/Hindi acoustic engine if AS voice is uninstalled
+      utterance.lang = 'bn-IN'; 
+      const asVoice = voices.find(v => v.lang.includes('bn') || v.lang.includes('hi'));
+      if (asVoice) utterance.voice = asVoice;
+    } 
+    else {
+      utterance.lang = 'en-US';
+    }
 
-  window.speechSynthesis.speak(utterance);
-};
+    window.speechSynthesis.speak(utterance);
+  };
 
   // Auto-announce status changes aloud
   useEffect(() => {
@@ -71,6 +71,43 @@ const speakAlert = (text: string) => {
       speakAlert("Highway N H 6 is clear. Proceed with caution across hill sectors.");
     }
   }, [isRerouted]);
+
+  // Real-Time Cloud Hazard Reporting Handler
+  const handleCloudReport = async (type: 'Landslide' | 'Flash Flood' | 'Road Blockage') => {
+    // Default coordinates near Sonapur sector
+    let reportLat = vehicle?.currentLocation?.lat || 25.1211;
+    let reportLng = vehicle?.currentLocation?.lng || 92.3686;
+
+    // Grab real GPS coordinates if geolocation is available on driver device
+    if ('geolocation' in navigator) {
+      try {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000 });
+        });
+        reportLat = position.coords.latitude;
+        reportLng = position.coords.longitude;
+      } catch (e) {
+        console.log("Using default corridor coordinates for hazard report.");
+      }
+    }
+
+    // Write report directly to online Supabase database
+    const { error } = await supabase.from('incidents').insert([
+      {
+        type: type,
+        description: `Hazard reported by Driver ${vehicle.driverName} (${vehicle.id})`,
+        lat: reportLat,
+        lng: reportLng,
+      },
+    ]);
+
+    if (error) {
+      console.error("Supabase live write failed, triggering local state fallback:", error);
+    }
+
+    // Trigger parent state update
+    onQuickReport(type);
+  };
 
   return (
     <div className="flex flex-col flex-1 bg-slate-950 p-4 max-w-md mx-auto w-full space-y-4 overflow-y-auto">
@@ -123,7 +160,7 @@ const speakAlert = (text: string) => {
         </h3>
         <div className="grid grid-cols-3 gap-2">
           <button
-            onClick={() => onQuickReport('Landslide')}
+            onClick={() => handleCloudReport('Landslide')}
             className="bg-red-950 hover:bg-red-900 border border-red-700 text-red-200 font-bold py-3 px-2 rounded-xl text-xs flex flex-col items-center gap-1 active:scale-95 transition-all"
           >
             <span className="text-xl">🪨</span>
@@ -131,7 +168,7 @@ const speakAlert = (text: string) => {
           </button>
 
           <button
-            onClick={() => onQuickReport('Flash Flood')}
+            onClick={() => handleCloudReport('Flash Flood')}
             className="bg-blue-950 hover:bg-blue-900 border border-blue-700 text-blue-200 font-bold py-3 px-2 rounded-xl text-xs flex flex-col items-center gap-1 active:scale-95 transition-all"
           >
             <span className="text-xl">🌊</span>
@@ -139,7 +176,7 @@ const speakAlert = (text: string) => {
           </button>
 
           <button
-            onClick={() => onQuickReport('Road Blockage')}
+            onClick={() => handleCloudReport('Road Blockage')}
             className="bg-orange-950 hover:bg-orange-900 border border-orange-700 text-orange-200 font-bold py-3 px-2 rounded-xl text-xs flex flex-col items-center gap-1 active:scale-95 transition-all"
           >
             <span className="text-xl">🚧</span>

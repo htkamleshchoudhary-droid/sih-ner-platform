@@ -1,11 +1,14 @@
 import React, { useEffect } from 'react';
+import { supabase } from '../supabaseClient';
 
 export interface Vehicle {
   id: string;
   vehicleNumber: string;
   cargoType: string;
-  currentLocation: { name: string };
+  currentLocation: { name: string; lat?: number; lng?: number };
+  destination?: { name: string };
   etaHours: number;
+  driverName?: string;
 }
 
 export interface RoadCorridor {
@@ -24,7 +27,7 @@ export interface DriverViewProps {
 }
 
 export const DriverView: React.FC<DriverViewProps> = (props) => {
-  const { vehicle, isRerouted, lang, onQuickReport, onDownloadPDF } = props;
+  const { vehicle, corridor, isRerouted, lang, onQuickReport, onDownloadPDF } = props;
 
   if (!vehicle) {
     return (
@@ -34,30 +37,126 @@ export const DriverView: React.FC<DriverViewProps> = (props) => {
     );
   }
 
-  // Text-to-Speech Engine for Hands-Free Driving
+  const corridorName = corridor?.name || "Sonapur Sector (NH-6)";
+
+  // 🔊 Robust Multi-Lingual Text-to-Speech Engine
   const speakAlert = (text: string) => {
     if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
+
+    window.speechSynthesis.cancel(); // Stop active speech immediately
+
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.9;
+    utterance.rate = 0.85; // Slow, clear pace for noisy vehicle cabs
     utterance.pitch = 1.0;
 
-    if (lang === 'HI') utterance.lang = 'hi-IN';
-    else if (lang === 'BN') utterance.lang = 'bn-IN';
-    else utterance.lang = 'en-US';
+    const loadAndSpeak = () => {
+      const voices = window.speechSynthesis.getVoices();
 
-    window.speechSynthesis.speak(utterance);
+      if (lang === 'HI') {
+        utterance.lang = 'hi-IN';
+        const hiVoice = voices.find(v => v.lang === 'hi-IN' || v.lang.startsWith('hi'));
+        if (hiVoice) utterance.voice = hiVoice;
+      } 
+      else if (lang === 'BN') {
+        utterance.lang = 'bn-IN';
+        const bnVoice = voices.find(v => v.lang === 'bn-IN' || v.lang.startsWith('bn'));
+        if (bnVoice) {
+          utterance.voice = bnVoice;
+        } else {
+          utterance.lang = 'en-IN'; // Phonetic fallback if bn-IN voice engine is uninstalled
+        }
+      } 
+      else if (lang === 'AS') {
+        utterance.lang = 'bn-IN'; // Phonetic fallback for Assamese
+        const asVoice = voices.find(v => v.lang.startsWith('bn') || v.lang.startsWith('hi'));
+        if (asVoice) utterance.voice = asVoice;
+      } 
+      else {
+        utterance.lang = 'en-US';
+        const enVoice = voices.find(v => v.lang.startsWith('en'));
+        if (enVoice) utterance.voice = enVoice;
+      }
+
+      window.speechSynthesis.speak(utterance);
+    };
+
+    if (window.speechSynthesis.getVoices().length > 0) {
+      loadAndSpeak();
+    } else {
+      window.speechSynthesis.onvoiceschanged = () => {
+        loadAndSpeak();
+      };
+    }
   };
 
+  // Auto-announce status changes aloud when rerouted state or language switches
   useEffect(() => {
-    if (isRerouted) {
-      speakAlert("Warning! Sonapur Tunnel on Highway N H 6 is blocked by a landslide. Your truck has been rerouted via Jowai Bypass.");
-    } else {
-      speakAlert("Highway N H 6 is clear. Proceed with caution across hill sectors.");
-    }
-  }, [isRerouted]);
+    let alertText = "";
+    const voices = window.speechSynthesis.getVoices();
+    const hasBnVoice = voices.some(v => v.lang === 'bn-IN' || v.lang.startsWith('bn'));
 
-  const corridorName = props.corridor?.name || 'Highway NH-6';
+    if (lang === 'HI') {
+      alertText = isRerouted
+        ? "चेतावनी! राष्ट्रीय राजमार्ग 6 पर सोनापुर सुरंग भूस्खलन के कारण बंद है। आपकी गाड़ी को जोवाई बाईपास से मोड़ा गया है।"
+        : "राष्ट्रीय राजमार्ग 6 साफ है। पहाड़ी क्षेत्रों में सावधानी से आगे बढ़ें।";
+    } else if (lang === 'BN') {
+      if (hasBnVoice) {
+        // Native Bengali script (if bn-IN voice is installed)
+        alertText = isRerouted
+          ? "সতর্কবার্তা! জাতীয় সড়ক ৬-এর সোনাপুর টানেল ধসের কারণে বন্ধ। আপনার ট্রাক জোয়াই বাইপাস দিয়ে ঘোরানো হয়েছে।"
+          : "জাতীয় সড়ক ৬ পরিষ্কার। পাহাড়ি এলাকায় সাবধানে গাড়ি চালান।";
+      } else {
+        // Phonetic Bengali transliteration (speaks Bengali pronunciation using default engine)
+        alertText = isRerouted
+          ? "Sotorkobarta! Jatiya Sorok 6 er Sonapur Tunnel dhoser karone bondho. Aponar truck Jowai Bypass diye ghorano hoyeche."
+          : "Jatiya Sorok 6 porishkar. Pahari elakay shobdhane gari chalan.";
+      }
+    } else if (lang === 'AS') {
+      alertText = isRerouted
+        ? "Sotorkobarta! National Highway 6 Sonapur Tunnel bhu-skhalanar babe bondho. Aponar bahan Jowai Bypass-ere preran kara hoiche."
+        : "National Highway 6 porishkar. Pahariya anchalat sabdhane chalaok.";
+    } else {
+      alertText = isRerouted
+        ? "Warning! Sonapur Tunnel on Highway N H 6 is blocked by a landslide. Your truck has been rerouted via Jowai Bypass."
+        : "Highway N H 6 is clear. Proceed with caution across hill sectors.";
+    }
+
+    speakAlert(alertText);
+  }, [isRerouted, lang]);
+
+  // Handle Hazard Reporting to Supabase with Geolocation Fallback
+  const handleCloudReport = async (type: 'Landslide' | 'Flash Flood' | 'Road Blockage') => {
+    let reportLat = vehicle?.currentLocation?.lat || 25.1211;
+    let reportLng = vehicle?.currentLocation?.lng || 92.3686;
+
+    if ('geolocation' in navigator) {
+      try {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000 });
+        });
+        reportLat = position.coords.latitude;
+        reportLng = position.coords.longitude;
+      } catch (e) {
+        console.log("Using default corridor coordinates for hazard report.");
+      }
+    }
+
+    // Write to online Supabase Cloud Database
+    const { error } = await supabase.from('incidents').insert([
+      {
+        type,
+        description: `Hazard reported by Driver ${vehicle.driverName || vehicle.id}`,
+        lat: reportLat,
+        lng: reportLng,
+      },
+    ]);
+
+    if (error) {
+      console.error("Supabase write error:", error.message);
+    }
+
+    onQuickReport(type);
+  };
 
   return (
     <div className="flex flex-col flex-1 bg-slate-950 p-4 max-w-md mx-auto w-full space-y-4 overflow-y-auto">
@@ -110,7 +209,7 @@ export const DriverView: React.FC<DriverViewProps> = (props) => {
         </h3>
         <div className="grid grid-cols-3 gap-2">
           <button
-            onClick={() => onQuickReport('Landslide')}
+            onClick={() => handleCloudReport('Landslide')}
             className="bg-red-950 hover:bg-red-900 border border-red-700 text-red-200 font-bold py-3 px-2 rounded-xl text-xs flex flex-col items-center gap-1 active:scale-95 transition-all"
           >
             <span className="text-xl">🪨</span>
@@ -118,7 +217,7 @@ export const DriverView: React.FC<DriverViewProps> = (props) => {
           </button>
 
           <button
-            onClick={() => onQuickReport('Flash Flood')}
+            onClick={() => handleCloudReport('Flash Flood')}
             className="bg-blue-950 hover:bg-blue-900 border border-blue-700 text-blue-200 font-bold py-3 px-2 rounded-xl text-xs flex flex-col items-center gap-1 active:scale-95 transition-all"
           >
             <span className="text-xl">🌊</span>
@@ -126,7 +225,7 @@ export const DriverView: React.FC<DriverViewProps> = (props) => {
           </button>
 
           <button
-            onClick={() => onQuickReport('Road Blockage')}
+            onClick={() => handleCloudReport('Road Blockage')}
             className="bg-orange-950 hover:bg-orange-900 border border-orange-700 text-orange-200 font-bold py-3 px-2 rounded-xl text-xs flex flex-col items-center gap-1 active:scale-95 transition-all"
           >
             <span className="text-xl">🚧</span>

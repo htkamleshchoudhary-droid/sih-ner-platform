@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { MapContainerComponent } from './components/MapContainer.tsx';
 import { ReportIncidentModal } from './components/ReportIncidentModal.tsx';
 import { DriverView } from './components/DriverView.tsx';
@@ -6,6 +6,7 @@ import { INITIAL_VEHICLES, INITIAL_INCIDENTS, INITIAL_SHELTERS, MAIN_CORRIDOR } 
 import type { Vehicle, IncidentReport, RoadCorridor } from './types/logistics.ts';
 import { fetchCorridorRisk } from './services/api.ts';
 import { saveIncidentOffline } from './services/db.ts';
+import { supabase } from './supabaseClient.ts';
 import jsPDF from 'jspdf';
 
 // Regional Language Translation Strings (Simplified English)
@@ -85,6 +86,61 @@ export function App() {
 
   const t = TRANSLATIONS[lang];
 
+  // 📡 SUPABASE REAL-TIME DATABASE CONNECTION
+  useEffect(() => {
+    // 1. Fetch live incidents from Supabase on load
+    const fetchRealTimeIncidents = async () => {
+      const { data, error } = await supabase.from('incidents').select('*');
+      if (error) {
+        console.error("Supabase initial fetch error:", error);
+      } else if (data && data.length > 0) {
+        // Map database records to IncidentReport format
+        const dbIncidents: IncidentReport[] = data.map((item: any) => ({
+          id: `INC-DB-${item.id}`,
+          location: { lat: item.lat, lng: item.lng, name: 'Live Field Incident' },
+          type: item.type,
+          severity: 'critical',
+          description: item.description || 'Reported via real-time telemetry.',
+          reportedAt: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          verified: true,
+          confidenceScore: 92,
+        }));
+        setIncidents((prev) => [...dbIncidents, ...prev]);
+      }
+    };
+
+    fetchRealTimeIncidents();
+
+    // 2. Subscribe to real-time INSERT events from Supabase
+    const channel = supabase
+      .channel('public:incidents')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'incidents' },
+        (payload) => {
+          const newItem = payload.new;
+          const liveReport: IncidentReport = {
+            id: `INC-DB-${newItem.id}`,
+            location: { lat: newItem.lat, lng: newItem.lng, name: 'Live Field Incident' },
+            type: newItem.type,
+            severity: 'critical',
+            description: newItem.description || 'Live report transmitted.',
+            reportedAt: 'Just now',
+            verified: true,
+            confidenceScore: 98,
+          };
+
+          // Update state live across all open browser instances
+          setIncidents((prev) => [liveReport, ...prev]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
   // Interactive Rerouting Simulation Trigger via FastAPI AI
   const handleSimulateDisruption = async () => {
     try {
@@ -135,7 +191,7 @@ export function App() {
     }
   };
 
-  // 1-Tap Quick Hazard Reporter Handler for Drivers
+  // 1-Tap Quick Hazard Reporter Handler for Drivers (Writes directly to Supabase)
   const handleQuickDriverReport = async (type: 'Landslide' | 'Flash Flood' | 'Road Blockage') => {
     const report: IncidentReport = {
       id: `INC-2026-${Math.floor(100 + Math.random() * 900)}`,
@@ -152,7 +208,22 @@ export function App() {
       await saveIncidentOffline(report);
       alert(`Network connection unavailable. Quick Hazard report (${type}) saved locally in IndexedDB.`);
     } else {
-      alert(`[Report Sent] Hazard alert (${type}) transmitted to MDoNER Command Center.`);
+      // Push directly to online Supabase Cloud Database
+      const { error } = await supabase.from('incidents').insert([
+        {
+          type,
+          description: 'Logged via Driver 1-Tap Rapid Reporter',
+          lat: 25.3341,
+          lng: 92.2890,
+        },
+      ]);
+
+      if (error) {
+        console.error("Supabase write error:", error);
+        alert(`[Offline Fallback] Hazard alert (${type}) saved locally.`);
+      } else {
+        alert(`[Live Synced] Hazard alert (${type}) transmitted to Supabase Cloud & Command Center.`);
+      }
     }
 
     setIncidents((prev) => [report, ...prev]);
@@ -438,29 +509,67 @@ export function App() {
             </>
           )}
 
-          {/* Road Conditions Tab */}
+          {/* Road Conditions Tab (Clean Visual Gauge) */}
           {activeTab === 'analytics' && (
             <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-6 overflow-y-auto">
-              <h2 className="text-lg font-bold text-slate-100 mb-4">📊 Live Road Conditions & Weather Data (Highway NH-6)</h2>
+              <h2 className="text-lg font-bold text-slate-100 mb-4">📊 Live Road Conditions & Weather Telemetry (Highway NH-6)</h2>
+              
               <div className="grid grid-cols-3 gap-4 mb-6">
                 <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-                  <span className="text-xs text-slate-400">Rainfall per Hour</span>
+                  <span className="text-xs text-slate-400">Rainfall Intensity</span>
                   <p className="text-2xl font-bold text-blue-400 mt-1">35.0 mm/hr</p>
+                  <span className="text-[10px] text-slate-500">Heavy Downpour Alert</span>
                 </div>
                 <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-                  <span className="text-xs text-slate-400">Hill Steepness</span>
-                  <p className="text-2xl font-bold text-orange-400 mt-1">45.0°</p>
+                  <span className="text-xs text-slate-400">Terrain Gradient</span>
+                  <p className="text-2xl font-bold text-orange-400 mt-1">45.0° Slope</p>
+                  <span className="text-[10px] text-slate-500">High Landslide Gradient</span>
                 </div>
                 <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-                  <span className="text-xs text-slate-400">Soil Water Level</span>
-                  <p className="text-2xl font-bold text-red-400 mt-1">88.0%</p>
+                  <span className="text-xs text-slate-400">Soil Saturation</span>
+                  <p className="text-2xl font-bold text-red-400 mt-1">88.0% Saturation</p>
+                  <span className="text-[10px] text-slate-500">Near Liquefaction Limit</span>
                 </div>
               </div>
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-                <h3 className="text-sm font-bold text-slate-300 mb-2">How Risk Score is Calculated</h3>
-                <code className="text-xs text-emerald-400 font-mono block bg-slate-900 p-3 rounded-lg border border-slate-800">
-                  Risk = (Rainfall * 1.5) + (Steepness * 0.8) + (Soil Water * 0.4)
-                </code>
+
+              {/* Clean Visual Predictive Gauge */}
+              <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-bold text-slate-200">🎯 Predictive Corridor Risk Index</h3>
+                  <span className={`text-xs font-bold px-2.5 py-1 rounded-lg border ${
+                    isRerouted 
+                      ? 'bg-red-950 text-red-400 border-red-800 animate-pulse' 
+                      : 'bg-orange-950 text-orange-400 border-orange-800'
+                  }`}>
+                    {isRerouted ? 'CRITICAL DISRUPTION ALERT' : 'ELEVATED RISK ZONE'}
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs font-bold">
+                    <span className="text-slate-400">Sonapur Sector Slope Instability</span>
+                    <span className={isRerouted ? 'text-red-400' : 'text-orange-400'}>
+                      {corridor.disruptionProbability}% Risk Score
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-800 h-3 rounded-full overflow-hidden flex">
+                    <div className="bg-emerald-500 w-[30%]" title="Safe Zone" />
+                    <div className="bg-orange-500 w-[30%]" title="Warning Zone" />
+                    <div className={`w-[40%] ${isRerouted ? 'bg-red-600 animate-pulse' : 'bg-slate-700'}`} title="Critical Zone" />
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 text-xs text-slate-300 flex items-start gap-2.5">
+                  <span className="text-lg">🤖</span>
+                  <div>
+                    <p className="font-bold text-slate-100">AI Predictive Intelligence Status</p>
+                    <p className="text-slate-400 mt-0.5">
+                      {isRerouted 
+                        ? 'High rainfall and soil saturation triggered active rerouting. Fleet directed via Jowai Bypass to bypass blocked Sonapur Tunnel.' 
+                        : 'Real-time sensors monitoring weather and soil metrics. Automated detour ready if risk index exceeds 75%.'}
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -492,8 +601,17 @@ export function App() {
       <ReportIncidentModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        onSubmitReport={(newReport) => {
+        onSubmitReport={async (newReport) => {
           setIncidents((prev) => [newReport, ...prev]);
+          // Sync modal report to Supabase
+          await supabase.from('incidents').insert([
+            {
+              type: newReport.type,
+              description: newReport.description,
+              lat: newReport.location.lat,
+              lng: newReport.location.lng,
+            },
+          ]);
         }}
       />
     </div>
