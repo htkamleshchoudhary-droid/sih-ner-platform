@@ -34,3 +34,8 @@ html, body, #root {
   background: #334155;
   border-radius: 3px;
 }
+
+/* Inverts bright OpenStreetMap tiles into high-contrast Dark Mode */
+.dark-map-tiles {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}

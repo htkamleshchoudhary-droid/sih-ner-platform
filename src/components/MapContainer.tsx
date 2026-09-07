@@ -57,9 +57,11 @@ export const MapContainerComponent: React.FC<MapProps> = ({
         <MapResizeHandler />
 
         {/* FREE NO-WATERMARK TILE LAYER (CartoDB Voyager) */}
+        {/* Standard OpenStreetMap Tiles (100% Free & Keyless) */}
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-          url="https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+          className="dark-map-tiles"
         />
 
         {/* Highway Corridor Overlay (NH-6) */}
